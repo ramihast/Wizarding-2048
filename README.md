@@ -4,7 +4,7 @@ Wizarding 2048 is a magical-school take on the classic 2048 puzzle. Slide enchan
 
 ## Play online
 
-**Live game:** [Play Wizarding 2048](https://YOUR-GITHUB-USERNAME.github.io/YOUR-REPOSITORY-NAME/)
+**Live game:** [Play Wizarding 2048](https://ramihast.github.io/Wizarding-2048/)
 
 Replace the URL above with your GitHub Pages address after publishing the game.
 
