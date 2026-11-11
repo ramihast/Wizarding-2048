@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#120f24">
+<title>Wizarding 2048 — The Relic Merge</title>
+<style>
+/* ============================================================
+   BASE / RESET
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; }
+:root{
+  --skyH: 245;                 /* sky hue, shifts with milestones */
+  --gold: #f2c66d;
+  --gold-soft: #e9d3a1;
+  --ink: #1d1426;
+  --text: #f4ead2;
+  --muted: #cbbd9e;
+  --panel: rgba(28, 20, 48, .72);
+  --panel-edge: rgba(242, 198, 109, .35);
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --gap: clamp(5px, 1.5vmin, 12px);
+  --pad: clamp(6px, 1.6vmin, 16px);
+  --move: 120ms;
+}
+html, body{
+  margin: 0; height: 100%;
+  overflow: hidden;            /* game view never scrolls the document */
+  overscroll-behavior: none;
+  background: #0d0a1c;
+  color: var(--text);
+  font-family: var(--sans);
+  -webkit-tap-highlight-color: transparent;
+}
+button{ font: inherit; color: inherit; }
+.sr{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+
+/* ============================================================
+   AMBIENT BACKGROUND (behind everything, cheap CSS only)
+   ============================================================ */
+.sky{
+  position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+  background:
+    radial-gradient(ellipse 80% 55% at 50% 0%, hsla(var(--skyH), 55%, 28%, .9), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 0% 100%, rgba(92, 34, 78, .55), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 100% 100%, rgba(60, 30, 90, .55), transparent 70%),
+    linear-gradient(180deg, hsl(var(--skyH), 45%, 10%), #0c0918 70%);
+  transition: background 2s ease;
+}
+.stars{
+  position:absolute; inset:-10%;
+  background-image:
+    radial-gradient(1.2px 1.2px at 12% 18%, #fff8 50%, transparent 51%),
+    radial-gradient(1px 1px at 72% 12%, #fff9 50%, transparent 51%),
+    radial-gradient(1.4px 1.4px at 38% 32%, #ffe9b07a 50%, transparent 51%),
+    radial-gradient(1px 1px at 86% 40%, #fff7 50%, transparent 51%),
+    radial-gradient(1.2px 1.2px at 22% 62%, #fff5 50%, transparent 51%),
+    radial-gradient(1px 1px at 58% 74%, #fff6 50%, transparent 51%),
+    radial-gradient(1.3px 1.3px at 92% 82%, #ffe9b066 50%, transparent 51%),
+    radial-gradient(1px 1px at 6% 90%, #fff5 50%, transparent 51%);
+  background-size: 340px 340px;
+  animation: twinkle 9s ease-in-out infinite alternate;
+  opacity: .8;
+}
+@keyframes twinkle{ from{opacity:.55} to{opacity:.95} }
+.window{
+  position:absolute; top: 6vh; width: clamp(70px, 11vw, 150px); opacity:.35;
+  filter: drop-shadow(0 0 18px rgba(170,190,255,.35));
+}
+.window.l{ left: 3vw; } .window.r{ right: 3vw; }
+.runes{
+  position:absolute; inset:0; opacity:.06;
+  background-image: repeating-linear-gradient(45deg, transparent 0 38px, rgba(242,198,109,.6) 38px 39px);
+}
+.candle{
+  position:absolute; bottom: 3vh; width: 14px; height: 70px; border-radius: 3px;
+  background: linear-gradient(90deg,#d9cba8,#f6ecd2 45%,#c8b88f);
+  opacity:.55;
+}
+.candle.l{ left: 4vw; } .candle.r{ right: 4vw; height: 54px; }
+.candle::before{
+  content:""; position:absolute; left:50%; top:-22px; width:10px; height:20px; transform:translateX(-50%);
+  border-radius: 50% 50% 50% 50% / 65% 65% 35% 35%;
+  background: radial-gradient(circle at 50% 70%, #fff6c9, #ffb347 55%, rgba(255,120,40,0) 75%);
+  animation: flicker 2.6s ease-in-out infinite;
+}
+.candle::after{
+  content:""; position:absolute; left:50%; top:-60px; width:120px; height:120px; transform:translateX(-50%);
+  background: radial-gradient(circle, rgba(255,190,90,.25), transparent 65%);
+}
+@keyframes flicker{
+  0%,100%{ transform:translateX(-50%) scale(1) rotate(-2deg) }
+  40%{ transform:translateX(-50%) scale(1.08,.94) rotate(2deg) }
+  70%{ transform:translateX(-50%) scale(.95,1.05) rotate(-1deg) }
+}
+.mote{
+  position:absolute; bottom:-10px; width:3px; height:3px; border-radius:50%;
+  background: #ffdf9a; box-shadow: 0 0 6px 2px rgba(255,210,120,.45);
+  animation: drift linear infinite; opacity:0;
+}
+@keyframes drift{
+  0%{ transform: translate(0,0); opacity:0 }
+  15%{ opacity:.7 }
+  85%{ opacity:.5 }
+  100%{ transform: translate(var(--dx), -105vh); opacity:0 }
+}
+body.calm .mote, body.calm .runes{ display:none; }
+body.calm .stars, body.calm .candle::before{ animation:none; }
+
+/* ============================================================
+   APP LAYOUT — viewport-fitted grid (responsive sizing)
+   Portrait: header / stats / board / dpad / utilities stacked.
+   The board area is a size container; the board takes
+   min(container width, container height) so it is always square
+   and never pushes controls off-screen.
+   ============================================================ */
+.app{
+  position: relative; z-index: 1;
+  height: 100vh;               /* fallback */
+  height: 100dvh;
+  max-width: 620px; margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0,1fr);
+  grid-template-rows: auto auto minmax(0,1fr) auto auto;
+  grid-template-areas: "head" "stats" "board" "dpad" "util";
+  gap: clamp(4px, 1.2vh, 12px);
+  padding:
+    max(var(--pad), env(safe-area-inset-top))
+    max(var(--pad), env(safe-area-inset-right))
+    max(var(--pad), env(safe-area-inset-bottom))
+    max(var(--pad), env(safe-area-inset-left));
+}
+.head{ grid-area: head; text-align:center; min-width:0; }
+h1{
+  margin:0; font-family: var(--serif); font-weight: 700; letter-spacing: .04em;
+  font-size: clamp(1.25rem, 4.6vh, 2.3rem); line-height: 1.05;
+  color: var(--gold-soft);
+  text-shadow: 0 0 18px rgba(242,198,109,.35), 0 2px 0 #2a1c08;
+}
+h1 span{ color: var(--gold); }
+.sub{
+  margin: .2em 0 0; font-family: var(--serif); font-style: italic;
+  font-size: clamp(.72rem, 1.9vh, .95rem); color: var(--muted);
+}
+
+.stats{
+  grid-area: stats; display:grid; grid-template-columns: 1fr 1fr; gap: clamp(4px,1vh,10px);
+}
+.score{
+  background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 10px;
+  padding: clamp(3px, .8vh, 8px) 10px; text-align:center;
+  box-shadow: inset 0 0 14px rgba(0,0,0,.4);
+}
+.score span{ display:block; font-size: clamp(.6rem,1.5vh,.75rem); letter-spacing:.14em; text-transform:uppercase; color: var(--muted); }
+.score b{ display:block; font-family: var(--serif); font-size: clamp(1rem, 3vh, 1.5rem); color: var(--gold); font-variant-numeric: tabular-nums; }
+.score b.bump{ animation: bump .3s ease; }
+@keyframes bump{ 50%{ transform: scale(1.15); color:#fff3c9 } }
+.chapter{
+  grid-column: 1 / -1; text-align:center; font-family: var(--serif);
+  font-size: clamp(.72rem, 1.9vh, .95rem); color: var(--gold-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chapter::before, .chapter::after{ content:" ✦ "; color: var(--gold); opacity:.7; }
+
+/* Board container: size container, so the board can be min(width,height) */
+.boardWrap{
+  grid-area: board; min-height: 0; min-width: 0;
+  display:flex; align-items:center; justify-content:center;
+  container-type: size;
+}
+.board{
+  position: relative;
+  /* Fallback estimate for browsers without container queries */
+  width: min(94vw, 560px, calc(100dvh - 300px));
+  aspect-ratio: 1 / 1;
+  border-radius: clamp(10px, 2vmin, 18px);
+  padding: var(--gap);
+  display:grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); gap: var(--gap);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255,230,170,.10), transparent 55%),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.025) 0 2px, transparent 2px 9px),
+    linear-gradient(160deg, #4a3020, #2c1b12 60%, #22150e);
+  border: 2px solid rgba(242,198,109,.45);
+  box-shadow: 0 0 0 4px rgba(20,12,8,.7), 0 0 40px rgba(242,198,109,.15), 0 18px 40px rgba(0,0,0,.6);
+  touch-action: none;          /* swipes on the board never scroll/zoom the page */
+  user-select: none; -webkit-user-select: none;
+  outline: none;
+  container-type: inline-size; /* tile text scales with board width */
+}
+@supports (width: 1cqh){
+  .board{ width: min(100cqw, 100cqh, 560px); }
+}
+.board:focus-visible{ box-shadow: 0 0 0 4px rgba(20,12,8,.7), 0 0 0 7px var(--gold), 0 18px 40px rgba(0,0,0,.6); }
+.cell{
+  border-radius: 8px;
+  background: linear-gradient(160deg, rgba(0,0,0,.35), rgba(0,0,0,.2));
+  box-shadow: inset 0 2px 6px rgba(0,0,0,.55), inset 0 -1px 0 rgba(255,220,160,.06);
+}
+.tiles{ position:absolute; inset:0; pointer-events:none; }
+
+/* Tile position via translate: % in translate refers to the tile's own size,
+   so col * (100% + gap) lands exactly on each cell. */
+.tile{
+  position:absolute; left: var(--gap); top: var(--gap);
+  width: calc((100% - 5 * var(--gap)) / 4); height: calc((100% - 5 * var(--gap)) / 4);
+  transform: translate(calc(var(--c) * (100% + var(--gap))), calc(var(--r) * (100% + var(--gap))));
+  transition: transform var(--move) ease-out;
+  z-index: 2;
+}
+.tile.dying{ z-index: 1; }
+.tin{
+  width:100%; height:100%; border-radius: 9px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap: 2%; padding: 6% 4%;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid rgba(255,240,200,.35);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), inset 0 -3px 8px rgba(0,0,0,.25), 0 0 var(--glow) rgba(255,205,110,.55), 0 3px 6px rgba(0,0,0,.45);
+  overflow: hidden; position: relative;
+}
+.tin::after{ /* faint rune ring */
+  content: attr(data-rune); position:absolute; top:3%; right:6%;
+  font-family: var(--serif); font-size: clamp(7px, 1.9cqw, 11px); opacity:.55; letter-spacing:.05em;
+}
+.ico{ font-size: clamp(14px, 7.2cqw, 46px); line-height: 1; filter: drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
+.lbl{
+  font-family: var(--serif); font-weight: 700; text-align:center; line-height: 1.05;
+  font-size: clamp(8px, 2.55cqw, 15px);
+  max-width: 100%; overflow:hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  word-break: break-word; hyphens: auto;
+}
+.tile.spawn .tin{ animation: spawn 180ms ease-out calc(var(--move) - 20ms) backwards; }
+.tile.merge .tin{ animation: merge 220ms ease-out calc(var(--move) - 20ms) backwards; }
+.tile.merge .tin::before{
+  content:""; position:absolute; inset:-10%; border-radius:50%;
+  border: 2px solid rgba(255,225,150,.9);
+  animation: ripple 420ms ease-out calc(var(--move)) both; pointer-events:none;
+}
+@keyframes spawn{ from{ transform: scale(0); opacity:0 } to{ transform: scale(1); opacity:1 } }
+@keyframes merge{ 0%{ transform: scale(.6) } 60%{ transform: scale(1.12) } 100%{ transform: scale(1) } }
+@keyframes ripple{ from{ transform: scale(.4); opacity:1 } to{ transform: scale(1.4); opacity:0 } }
+.tin.rare{ animation: none; }
+.tin.legend{ border-color: var(--gold); }
+body:not(.calm) .tin.legend .ico{ animation: shimmer 3.5s ease-in-out infinite; }
+@keyframes shimmer{ 50%{ filter: drop-shadow(0 0 6px #ffe39a) } }
+
+/* Non-blocking game-over overlay inside board */
+.over{
+  position:absolute; inset:0; z-index: 5; border-radius: inherit;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap: 10px;
+  background: rgba(14,10,28,.72); backdrop-filter: blur(2px);
+  text-align:center; padding: 16px;
+}
+.over[hidden]{ display:none; }
+.over h2{ margin:0; font-family: var(--serif); color: var(--gold); font-size: clamp(1.1rem, 5cqw, 1.8rem); }
+.over p{ margin:0; color: var(--text); font-size: clamp(.8rem, 3cqw, 1rem); }
+.over .row{ display:flex; gap: 10px; }
+
+/* Buttons */
+.btn{
+  min-height: 44px; min-width: 44px; padding: 0 12px;
+  border-radius: 10px; cursor: pointer;
+  background: linear-gradient(180deg, rgba(70,48,110,.9), rgba(40,26,68,.95));
+  border: 1px solid var(--panel-edge);
+  color: var(--text); font-size: clamp(.75rem, 1.8vh, .9rem); font-weight: 600;
+  display:inline-flex; align-items:center; justify-content:center; gap: 6px;
+  box-shadow: 0 2px 0 rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.12);
+  transition: transform .08s, background .2s, box-shadow .2s;
+  touch-action: manipulation;
+}
+.btn:hover{ background: linear-gradient(180deg, rgba(90,62,140,.95), rgba(50,32,84,.95)); }
+.btn:active{ transform: translateY(1px); }
+.btn:focus-visible{ outline: 3px solid var(--gold); outline-offset: 2px; }
+.btn:disabled{ opacity:.45; cursor: not-allowed; }
+.btn.primary{ background: linear-gradient(180deg, #d9a845, #a8761f); color: #1d1206; border-color: #ffe0a0; }
+.btn[aria-pressed="true"]{ background: linear-gradient(180deg, #6a4d1a, #4a3410); border-color: var(--gold); color: #ffe7b0; }
+
+.dpad{
+  grid-area: dpad; display:grid; grid-template-columns: repeat(4, 1fr); gap: clamp(4px,1vw,10px);
+  max-width: 420px; width: 100%; justify-self: center;
+}
+.dpad .btn{ min-height: clamp(42px, 6.5vh, 54px); font-size: clamp(1.1rem, 3vh, 1.4rem); }
+.util{
+  grid-area: util; display:flex; flex-wrap: wrap; justify-content:center; gap: clamp(4px, 1vw, 8px);
+}
+.util .btn{ flex: 1 1 0; min-width: 0; padding: 0 6px; white-space: nowrap; }
+.util .btn .ui-ico{ font-size: 1.05em; }
+
+/* Short phones: compact typography and drop subtitle */
+@media (max-height: 640px) and (orientation: portrait){
+  .sub{ display:none; }
+  .util .btn .txt{ font-size: .72rem; }
+}
+@media (max-width: 380px){
+  .util .btn{ font-size: .7rem; }
+  .util .btn .ui-ico{ display:none; }
+}
+@media (max-height: 560px) and (orientation: portrait){
+  .util .btn, .dpad .btn{ min-height: 40px; }
+  .chapter{ display:none; }
+}
+
+/* Landscape on short screens: three columns, board in the middle */
+@media (orientation: landscape) and (max-height: 620px){
+  .app{
+    max-width: none;
+    grid-template-columns: minmax(0,1fr) auto minmax(0,1fr);
+    grid-template-rows: 1fr 1fr;
+    grid-template-areas: "head board dpad" "stats board util";
+    align-items: center;
+  }
+  .boardWrap{ width: min(calc(100dvh - 2 * var(--pad)), 58vw); height: 100%; }
+  .head{ align-self: end; }
+  .stats{ align-self: start; }
+  .dpad{
+    align-self: end; grid-template-columns: repeat(3, minmax(44px, 1fr));
+    grid-template-areas: ". up ." "left down right"; max-width: 220px;
+  }
+  .dpad [data-dir="up"]{ grid-area: up; } .dpad [data-dir="left"]{ grid-area: left; }
+  .dpad [data-dir="down"]{ grid-area: down; } .dpad [data-dir="right"]{ grid-area: right; }
+  .util{ align-self: start; max-width: 260px; justify-self: center; }
+  .util .btn{ flex: 1 1 40%; }
+  .window, .candle{ display:none; }
+}
+/* Narrow screens: hide side decorations so they never crowd the board */
+@media (max-width: 760px){ .window{ display:none; } .candle{ opacity:.3; } }
+
+/* ============================================================
+   EVENTS (milestones) & DIALOGS
+   ============================================================ */
+.event{
+  position: fixed; inset: 0; z-index: 20; display:flex; align-items:center; justify-content:center;
+  background: radial-gradient(circle, rgba(30,18,50,.55), rgba(8,6,16,.75));
+  cursor: pointer; padding: 20px;
+}
+.event[hidden]{ display:none; }
+.eventCard{
+  position: relative; text-align:center; max-width: 420px;
+  padding: 26px 26px 20px; border-radius: 16px;
+  background: linear-gradient(180deg, #f3e6c4, #dcc48f);
+  color: var(--ink); border: 2px solid #b48a3c;
+  box-shadow: 0 0 60px rgba(255,210,120,.45), 0 20px 50px rgba(0,0,0,.6);
+  animation: rise .45s ease-out;
+}
+@keyframes rise{ from{ transform: translateY(20px) scale(.92); opacity:0 } }
+.eventCard h2{ margin: 6px 0 4px; font-family: var(--serif); font-size: clamp(1.3rem, 5vw, 1.9rem); color: #4a2a08; }
+.eventCard p{ margin: 0; font-family: var(--serif); font-style: italic; }
+.eventCard small{ display:block; margin-top: 10px; font-size: .75rem; opacity:.7; }
+.seal{ width: 74px; height: 74px; margin: -60px auto 0; display:block; }
+.seal .ring{ transform-origin: 50% 50%; animation: spin 6s linear infinite; }
+@keyframes spin{ to{ transform: rotate(360deg) } }
+.spark{
+  position:absolute; left:50%; top:30%; width:6px; height:6px; border-radius:50%;
+  background:#ffe08a; box-shadow:0 0 8px 2px #ffcf6a;
+  animation: burst .9s ease-out forwards;
+}
+@keyframes burst{ from{ transform: translate(0,0) scale(1); opacity:1 } to{ transform: translate(var(--x), var(--y)) scale(.2); opacity:0 } }
+
+.modalBack{
+  position: fixed; inset: 0; z-index: 30; display:flex; align-items:center; justify-content:center;
+  background: rgba(6,4,14,.7); padding: 16px;
+}
+.modalBack[hidden]{ display:none; }
+.modal{
+  width: min(460px, 100%); max-height: calc(100dvh - 32px); overflow:auto;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(255,255,255,.35), transparent 60%),
+    linear-gradient(180deg, #f2e4c0, #e0c992);
+  color: var(--ink); border-radius: 14px; border: 2px solid #b48a3c;
+  padding: 20px 20px 16px; box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  font-size: .95rem; line-height: 1.45;
+}
+.modal h2{ margin: 0 0 8px; font-family: var(--serif); color: #4a2a08; font-size: 1.4rem; }
+.modal ul{ margin: 6px 0; padding-left: 1.2em; }
+.modal kbd{ font-family: var(--sans); font-size: .8em; background:#fff7e0; border:1px solid #b48a3c; border-radius:4px; padding: 0 4px; }
+.mBtns{ display:flex; justify-content:flex-end; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.modal .btn{ color: var(--text); }
+.modal .btn.primary{ color: #1d1206; }
+
+/* ============================================================
+   REDUCED MOTION: static equivalents, no essential info lost
+   ============================================================ */
+@media (prefers-reduced-motion: reduce){
+  :root{ --move: 0ms; }
+  .tile{ transition: none; }
+  .tile.spawn .tin, .tile.merge .tin, .tile.merge .tin::before,
+  .stars, .candle::before, .seal .ring, .eventCard, .score b.bump,
+  .tin.legend .ico{ animation: none !important; }
+  .mote, .spark{ display:none; }
+}
+</style>
+</head>
+<body>
+
+<!-- Ambient scene (decorative) -->
+<div class="sky" aria-hidden="true">
+  <div class="stars"></div>
+  <div class="runes"></div>
+  <svg class="window l" viewBox="0 0 100 160">
+    <path d="M10 160V60a40 40 0 0 1 80 0v100z" fill="#1b2350" stroke="#c9a46a" stroke-width="4"/>
+    <circle cx="66" cy="48" r="12" fill="#f6efd2"/><circle cx="71" cy="44" r="11" fill="#1b2350"/>
+    <path d="M50 22v138M10 95h80" stroke="#c9a46a" stroke-width="3"/>
+    <path d="M18 160l10-28 8 10 9-24 9 18 7-12 10 36z" fill="#0d1030"/>
+  </svg>
+  <svg class="window r" viewBox="0 0 100 160">
+    <path d="M10 160V60a40 40 0 0 1 80 0v100z" fill="#1b2350" stroke="#c9a46a" stroke-width="4"/>
+    <circle cx="30" cy="40" r="1.5" fill="#fff"/><circle cx="62" cy="70" r="1.2" fill="#fff"/><circle cx="44" cy="58" r="1" fill="#fff"/>
+    <path d="M50 22v138M10 95h80" stroke="#c9a46a" stroke-width="3"/>
+    <path d="M14 160v-30h10v-14l6-10 6 10v14h14v-24l8-14 8 14v24h10v30z" fill="#0d1030"/>
+  </svg>
+  <div class="candle l"></div><div class="candle r"></div>
+  <div id="motes"></div>
+</div>
+
+<main class="app" id="app">
+  <header class="head">
+    <h1>Wizarding <span>2048</span></h1>
+    <p class="sub">Combine matching relics. Keep the magic flowing.</p>
+  </header>
+
+  <section class="stats" aria-label="Scores">
+    <div class="score"><span>Score</span><b id="score">0</b></div>
+    <div class="score"><span>Best</span><b id="best">0</b></div>
+    <div class="chapter" id="chapter">Chapter I: First Lessons</div>
+  </section>
+
+  <div class="boardWrap">
+    <div class="board" id="board" tabindex="0" role="group"
+         aria-label="Game board. Use arrow keys, W A S D, swipe, or the move buttons to slide relics."
+         aria-describedby="boardDesc">
+      <div class="tiles" id="tiles"></div>
+      <div class="over" id="over" hidden>
+        <h2>The Candles Gutter Out</h2>
+        <p>No moves remain. <span id="overScore"></span></p>
+        <div class="row">
+          <button class="btn" type="button" id="overUndo">↶ Undo</button>
+          <button class="btn primary" type="button" id="overNew">New Game</button>
+        </div>
+      </div>
+    </div>
+    <p id="boardDesc" class="sr">4 by 4 board. Two matching relics merge into the next, more powerful relic.</p>
+  </div>
+
+  <nav class="dpad" aria-label="Move relics">
+    <button class="btn" type="button" data-dir="left"  aria-label="Move left">◀</button>
+    <button class="btn" type="button" data-dir="up"    aria-label="Move up">▲</button>
+    <button class="btn" type="button" data-dir="down"  aria-label="Move down">▼</button>
+    <button class="btn" type="button" data-dir="right" aria-label="Move right">▶</button>
+  </nav>
+
+  <div class="util" role="toolbar" aria-label="Game options">
+    <button class="btn" type="button" id="btnNew"><span class="ui-ico" aria-hidden="true">✦</span><span class="txt">New</span></button>
+    <button class="btn" type="button" id="btnUndo"><span class="ui-ico" aria-hidden="true">↶</span><span class="txt">Undo</span></button>
+    <button class="btn" type="button" id="btnHelp"><span class="ui-ico" aria-hidden="true">?</span><span class="txt">Help</span></button>
+    <button class="btn" type="button" id="btnSound" aria-pressed="false"><span class="ui-ico" aria-hidden="true">♪</span><span class="txt">Sound</span></button>
+    <button class="btn" type="button" id="btnCalm" aria-pressed="false"><span class="ui-ico" aria-hidden="true">☾</span><span class="txt">Calm</span></button>
+  </div>
+</main>
+
+<div id="live" class="sr" aria-live="polite" aria-atomic="true"></div>
+<div id="event" class="event" hidden role="status" aria-live="off"></div>
+
+<div id="modalBack" class="modalBack" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle" id="modal">
+    <h2 id="mTitle"></h2>
+    <div id="mBody"></div>
+    <div class="mBtns" id="mBtns"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ============================================================
+   TIER DATA — artifact names, icons, palette, endless fallback
+   ============================================================ */
+const BASE = [
+  ["Parchment Scrap","📜","#efe2c0"], ["Ink Bottle","🖋️","#ddc9a0"], ["Wand","🪄","#cda86c"],
+  ["Potion Vial","🧪","#93c9aa"], ["Spellbook","📖","#7a5236"], ["Sorting Hat","🎩","#5b4636"],
+  ["House Scarf","🧣","#7d1f2d"], ["Owl","🦉","#86663a"], ["Broomstick","🧹","#6b4a2b"],
+  ["Golden Snitch","✪","#d4ab2c"], ["Enchanted Map","🗺️","#bfa169"], ["Patronus Spirit","🦌","#7fb3dc"],
+  ["Phoenix","🔥","#c2421b"], ["Triwizard Cup","🏆","#34558a"], ["Elder Wand","⚡","#3a2c4a"],
+  ["Philosopher's Stone","💎","#8b1a3a"], ["Enchanted Castle","🏰","#2a3d66"], ["Ancient Magic","🌀","#4b2a7a"],
+  ["Wizarding Legend","👑","#1c1a33"]
+];
+const LIGHT_TEXT_FROM = new Set([5,6,7,8,9,13,14,15,16,17,18,19]);
+const FB_PRE  = ["Celestial","Astral","Starborn","Eternal","Mythic","Primordial","Moonlit","Timeless"];
+const FB_NOUN = [["Grimoire","📕"],["Constellation","🌌"],["Comet","☄️"],["Crown","💫"],["Nebula Orb","🔮"],["Rune Gate","⛩️"],["Moon Chalice","🌙"],["Dragon Sigil","🐉"],["Star Forge","⭐"],["World Tree","🌳"]];
+const ROMAN = n => { const m=[[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]]; let s=""; for(const [v,r] of m){ while(n>=v){ s+=r; n-=v; } } return s; };
+
+function tierInfo(t){
+  if (t <= BASE.length){
+    const [name, icon, bg] = BASE[t-1];
+    const light = LIGHT_TEXT_FROM.has(t);
+    return { name, icon, bg: `linear-gradient(155deg, ${shade(bg, 18)}, ${bg} 55%, ${shade(bg,-18)})`,
+             fg: light ? "#fbf1d6" : "#2a1a0c", glow: t >= 10 ? Math.min(4 + (t-9)*2, 22) : 0, legend: t >= 15 };
+  }
+  // Endless fallback: deterministic escalating names with rising hue/glow
+  const k = t - BASE.length - 1;
+  const noun = FB_NOUN[k % FB_NOUN.length];
+  const pre = FB_PRE[Math.floor(k / FB_NOUN.length) % FB_PRE.length];
+  const cycle = Math.floor(k / (FB_NOUN.length * FB_PRE.length));
+  const hue = (260 + k * 47) % 360;
+  return { name: `${pre} ${noun[0]}${cycle ? " " + ROMAN(cycle+1) : ""}`, icon: noun[1],
+           bg: `linear-gradient(155deg, hsl(${hue} 55% 38%), hsl(${hue} 50% 24%) 60%, hsl(${(hue+40)%360} 55% 16%))`,
+           fg: "#fff4d8", glow: 24, legend: true };
+}
+function shade(hex, pct){
+  const n = parseInt(hex.slice(1),16); let r=n>>16, g=(n>>8)&255, b=n&255;
+  const f = pct/100; const adj = c => Math.max(0, Math.min(255, Math.round(f>0 ? c + (255-c)*f : c*(1+f))));
+  return `rgb(${adj(r)},${adj(g)},${adj(b)})`;
+}
+
+/* Chapters / milestones (tier 11 == value 2048) */
+const GREAT_HALL_TIER = 11;
+const MILESTONES = {
+  5:  ["Chapter II: The Spellbook Opens", "Pages rustle with forgotten charms."],
+  8:  ["Chapter III: Owl Post", "A tawny owl brings word of greater wonders."],
+  10: ["Chapter IV: The Snitch Takes Flight", "Golden wings flicker across the board."],
+  11: ["The Great Hall Awakens", "Floating candles blaze to life. The magic continues…"],
+  13: ["Chapter VI: Rebirth in Flame", "A phoenix song rings through the towers."],
+  15: ["Chapter VII: The Wand of Legend", "Ancient power answers your call."],
+  17: ["Chapter VIII: The Castle Stirs", "Every stone remembers your name."],
+  19: ["Chapter IX: A Legend Is Born", "Tales of you will be told for centuries."]
+};
+function isMilestone(t){ return MILESTONES[t] || (t > 19 && (t - 19) % 2 === 0); }
+function milestoneText(t){
+  if (MILESTONES[t]) return MILESTONES[t];
+  return [`Chapter ${ROMAN(9 + Math.floor((t-19)/2))}: ${tierInfo(t).name}`, "The stars themselves rearrange to watch."];
+}
+function chapterFor(maxT){
+  let label = "Chapter I: First Lessons";
+  for (let t = 1; t <= maxT; t++) if (isMilestone(t)) label = milestoneText(t)[0];
+  return label;
+}
+
+/* ============================================================
+   STORAGE — defensive wrapper (private mode / disabled storage)
+   ============================================================ */
+const KEY = "wizarding2048.v1";
+const store = {
+  ok: (() => { try { const k="__t"; localStorage.setItem(k,"1"); localStorage.removeItem(k); return true; } catch(e){ return false; } })(),
+  load(){ if(!this.ok) return null; try { return JSON.parse(localStorage.getItem(KEY)); } catch(e){ return null; } },
+  save(obj){ if(!this.ok) return; try { localStorage.setItem(KEY, JSON.stringify(obj)); } catch(e){} }
+};
+
+/* ============================================================
+   GAME STATE MODEL
+   ============================================================ */
+let uidCounter = 1;
+const uid = () => uidCounter++;
+const state = {
+  tiles: [],          // {id, tier, r, c}
+  score: 0, best: 0,
+  maxTier: 1,
+  flags: {},          // celebrated milestone tiers
+  over: false,
+  history: [],        // undo stack of snapshots
+  settings: { sound: false, calm: false, seenHelp: false }
+};
+const HISTORY_MAX = 10;
+
+function snapshot(){
+  return { tiles: state.tiles.map(t => ({tier:t.tier, r:t.r, c:t.c})), score: state.score,
+           maxTier: state.maxTier, flags: {...state.flags}, over: state.over };
+}
+function persist(){
+  store.save({ game: snapshot(), best: state.best, settings: state.settings,
+               history: state.history.slice(-1) });
+}
+
+/* ============================================================
+   MOVEMENT / MERGE RULES (pure — no DOM)
+   For each row/column, read tiles in order toward the move edge.
+   A tile merges with the previously placed tile only if equal
+   and that tile hasn't merged this move (each tile merges once).
+   ============================================================ */
+function computeMove(tiles, dir){
+  const grid = Array.from({length:4}, () => Array(4).fill(null));
+  tiles.forEach(t => grid[t.r][t.c] = t);
+  let moved = false, gain = 0;
+  const next = [], consumed = [], merged = [];
+  for (let i = 0; i < 4; i++){
+    const coords = [];
+    for (let j = 0; j < 4; j++){
+      if (dir === "left")  coords.push([i, j]);
+      if (dir === "right") coords.push([i, 3-j]);
+      if (dir === "up")    coords.push([j, i]);
+      if (dir === "down")  coords.push([3-j, i]);
+    }
+    const line = coords.map(([r,c]) => grid[r][c]).filter(Boolean);
+    const out = [];
+    for (const t of line){
+      const last = out[out.length-1];
+      if (last && !last.merged && last.tile.tier === t.tier){ last.merged = true; last.other = t; }
+      else out.push({ tile: t, merged: false });
+    }
+    out.forEach((e, k) => {
+      const [r, c] = coords[k];
+      if (e.merged){
+        const nt = { id: uid(), tier: e.tile.tier + 1, r, c };
+        next.push(nt); merged.push(nt);
+        consumed.push({ id: e.tile.id, r, c }, { id: e.other.id, r, c });
+        gain += 2 ** nt.tier; moved = true;
+      } else {
+        if (e.tile.r !== r || e.tile.c !== c) moved = true;
+        next.push({ id: e.tile.id, tier: e.tile.tier, r, c });
+      }
+    });
+  }
+  return { moved, next, consumed, merged, gain };
+}
+function emptyCells(tiles){
+  const taken = new Set(tiles.map(t => t.r*4 + t.c)); const out = [];
+  for (let i = 0; i < 16; i++) if (!taken.has(i)) out.push([Math.floor(i/4), i%4]);
+  return out;
+}
+function spawn(tiles){
+  const cells = emptyCells(tiles); if (!cells.length) return null;
+  const [r, c] = cells[Math.floor(Math.random() * cells.length)];
+  const t = { id: uid(), tier: Math.random() < 0.9 ? 1 : 2, r, c };   // 90% scrap, 10% ink
+  tiles.push(t); return t;
+}
+function canMove(tiles){
+  if (tiles.length < 16) return true;
+  const g = Array.from({length:4}, () => Array(4).fill(0));
+  tiles.forEach(t => g[t.r][t.c] = t.tier);
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++){
+    if (c < 3 && g[r][c] === g[r][c+1]) return true;
+    if (r < 3 && g[r][c] === g[r+1][c]) return true;
+  }
+  return false;
+}
+
+/* ============================================================
+   RENDERING (from state; stable ids let tiles slide & merge)
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const boardEl = $("board"), tilesEl = $("tiles"), overEl = $("over");
+const els = new Map();      // id -> element (live tiles)
+
+(function buildCells(){
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < 16; i++){ const d = document.createElement("div"); d.className = "cell"; frag.appendChild(d); }
+  boardEl.insertBefore(frag, tilesEl);
+})();
+
+function makeTile(t, cls){
+  const info = tierInfo(t.tier);
+  const el = document.createElement("div");
+  el.className = "tile" + (cls ? " " + cls : "");
+  el.setAttribute("aria-hidden", "true");
+  const tin = document.createElement("div");
+  tin.className = "tin" + (info.legend ? " legend" : "");
+  tin.dataset.rune = ROMAN(t.tier);
+  tin.style.setProperty("--bg", info.bg);
+  tin.style.setProperty("--fg", info.fg);
+  tin.style.setProperty("--glow", info.glow + "px");
+  tin.innerHTML = `<span class="ico"></span><span class="lbl"></span>`;
+  tin.firstChild.textContent = info.icon;
+  tin.lastChild.textContent = info.name;
+  el.appendChild(tin);
+  return el;
+}
+function place(el, t){ el.style.setProperty("--c", t.c); el.style.setProperty("--r", t.r); }
+
+function render(info = {}){
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dur = reduce ? 0 : 130;
+  // Slide consumed tiles into their merge target, then remove them
+  (info.consumed || []).forEach(m => {
+    const el = els.get(m.id); if (!el) return;
+    els.delete(m.id); el.classList.add("dying"); place(el, m);
+    setTimeout(() => el.remove(), dur);
+  });
+  const live = new Set();
+  for (const t of state.tiles){
+    live.add(t.id);
+    let el = els.get(t.id);
+    if (!el){
+      const cls = info.mergedIds && info.mergedIds.has(t.id) ? "merge" : (info.spawnId === t.id || info.fresh ? "spawn" : "");
+      el = makeTile(t, cls); place(el, t);
+      tilesEl.appendChild(el); els.set(t.id, el);
+    } else place(el, t);
+  }
+  for (const [id, el] of els) if (!live.has(id)){ el.remove(); els.delete(id); }
+
+  $("score").textContent = state.score.toLocaleString();
+  $("best").textContent = state.best.toLocaleString();
+  $("chapter").textContent = chapterFor(state.maxTier);
+  $("btnUndo").disabled = state.history.length === 0;
+  $("overUndo").disabled = state.history.length === 0;
+  overEl.hidden = !state.over;
+  if (state.over) $("overScore").textContent = `Final score: ${state.score.toLocaleString()}.`;
+  // Sky slowly shifts hue as the player advances
+  document.documentElement.style.setProperty("--skyH", String((245 + Math.max(0, state.maxTier - 4) * 14) % 360));
+}
+function hardRender(){ tilesEl.innerHTML = ""; els.clear(); render({ fresh: true }); }
+
+function bumpScore(){
+  const s = $("score"); s.classList.remove("bump"); void s.offsetWidth; s.classList.add("bump");
+}
+let liveTimer = 0;
+function announce(msg){
+  const live = $("live"); live.textContent = "";
+  clearTimeout(liveTimer); liveTimer = setTimeout(() => live.textContent = msg, 40);
+}
+
+/* ============================================================
+   GAME ACTIONS
+   ============================================================ */
+function newGame(){
+  state.tiles = []; state.score = 0; state.maxTier = 1; state.flags = {}; state.over = false; state.history = [];
+  spawn(state.tiles); spawn(state.tiles);
+  hardRender(); persist(); announce("New game started.");
+}
+
+function doMove(dir){
+  if (modalOpen || eventOpen && !eventSkippable()) return;
+  if (eventOpen) closeEvent();
+  if (state.over) return;
+  const res = computeMove(state.tiles, dir);
+  if (!res.moved){ sfx.bump(); return; }               // invalid move: no spawn
+  state.history.push(snapshot());
+  if (state.history.length > HISTORY_MAX) state.history.shift();
+  state.tiles = res.next;
+  state.score += res.gain;
+  if (state.score > state.best) state.best = state.score;
+  const spawned = spawn(state.tiles);
+  const prevMax = state.maxTier;
+  state.tiles.forEach(t => { if (t.tier > state.maxTier) state.maxTier = t.tier; });
+  state.over = !canMove(state.tiles);
+
+  render({ consumed: res.consumed, mergedIds: new Set(res.merged.map(m => m.id)), spawnId: spawned && spawned.id });
+
+  if (res.merged.length){
+    bumpScore();
+    const top = res.merged.reduce((a,b) => b.tier > a.tier ? b : a);
+    sfx.merge(top.tier);
+    announce(`Merged into ${tierInfo(top.tier).name}${res.merged.length > 1 ? ` and ${res.merged.length-1} more` : ""}. Score ${state.score}.`);
+  } else sfx.move();
+
+  // Milestones: celebrate first arrival at each milestone tier
+  if (state.maxTier > prevMax){
+    for (let t = prevMax + 1; t <= state.maxTier; t++){
+      if (isMilestone(t) && !state.flags[t]){ state.flags[t] = true; celebrate(t); }
+    }
+  }
+  if (state.over){ sfx.over(); announce(`No moves remain. Final score ${state.score}. Undo or start a new game.`); }
+  persist();
+}
+
+function undo(){
+  if (modalOpen || !state.history.length) return;
+  const s = state.history.pop();
+  state.tiles = s.tiles.map(t => ({ id: uid(), ...t }));
+  state.score = s.score; state.maxTier = s.maxTier; state.flags = s.flags; state.over = s.over;
+  hardRender(); persist(); sfx.move(); announce("Move undone.");
+}
+
+function requestNewGame(){
+  const inProgress = !state.over && (state.score > 0 || state.tiles.length > 2);
+  if (!inProgress){ newGame(); return; }
+  openDialog({
+    title: "Begin a New Term?",
+    body: "<p>Your current relics will be swept from the table and this game will be lost.</p>",
+    buttons: [
+      { label: "Keep Playing", action: closeDialog, cancel: true },
+      { label: "New Game", primary: true, action: () => { closeDialog(); newGame(); } }
+    ]
+  });
+}
+
+/* ============================================================
+   MILESTONE EVENTS — brief, skippable (click / key / move)
+   ============================================================ */
+const eventEl = $("event");
+let eventOpen = false, eventTimer = 0, eventShownAt = 0;
+const eventSkippable = () => Date.now() - eventShownAt > 250;
+function celebrate(t){
+  const [title, line] = milestoneText(t);
+  const big = t === GREAT_HALL_TIER;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  eventEl.innerHTML = `
+    <div class="eventCard">
+      <svg class="seal" viewBox="0 0 80 80" aria-hidden="true">
+        <circle cx="40" cy="40" r="36" fill="#8b1a2a" stroke="#f2c66d" stroke-width="3"/>
+        <g class="ring"><circle cx="40" cy="40" r="28" fill="none" stroke="#f2c66d" stroke-width="1.5" stroke-dasharray="4 5"/></g>
+        <path d="M40 20l5 13h14l-11 8 4 14-12-8-12 8 4-14-11-8h14z" fill="#f2c66d"/>
+      </svg>
+      <h2></h2><p></p>
+      <small>${big ? "The board remains yours. " : ""}Tap, press any key, or keep moving to continue.</small>
+    </div>`;
+  eventEl.querySelector("h2").textContent = title;
+  eventEl.querySelector("p").textContent = line;
+  if (!reduce && !state.settings.calm){
+    const card = eventEl.querySelector(".eventCard");
+    const n = big ? 22 : 12;
+    for (let i = 0; i < n; i++){
+      const s = document.createElement("span"); s.className = "spark";
+      const a = (i / n) * Math.PI * 2, d = 90 + Math.random() * 90;
+      s.style.setProperty("--x", Math.cos(a)*d + "px"); s.style.setProperty("--y", Math.sin(a)*d + "px");
+      card.appendChild(s);
+    }
+  }
+  eventEl.hidden = false; eventOpen = true; eventShownAt = Date.now();
+  clearTimeout(eventTimer); eventTimer = setTimeout(closeEvent, big ? 3200 : 2200);
+  sfx.milestone(big);
+  announce(`${title}. ${line}`);
+}
+function closeEvent(){ eventEl.hidden = true; eventOpen = false; clearTimeout(eventTimer); }
+eventEl.addEventListener("click", closeEvent);
+
+/* ============================================================
+   DIALOGS — keyboard operable, focus trapped & restored
+   ============================================================ */
+const modalBack = $("modalBack"), modal = $("modal");
+let modalOpen = false, lastFocus = null, cancelAction = null;
+function openDialog({ title, body, buttons }){
+  lastFocus = document.activeElement;
+  $("mTitle").textContent = title;
+  $("mBody").innerHTML = body;
+  const box = $("mBtns"); box.innerHTML = ""; cancelAction = closeDialog;
+  buttons.forEach(b => {
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "btn" + (b.primary ? " primary" : "");
+    btn.textContent = b.label; btn.addEventListener("click", b.action);
+    if (b.cancel) cancelAction = b.action;
+    box.appendChild(btn);
+  });
+  modalBack.hidden = false; modalOpen = true;
+  (box.querySelector(".primary") || box.firstChild).focus();
+}
+function closeDialog(){
+  modalBack.hidden = true; modalOpen = false;
+  if (lastFocus && document.contains(lastFocus)) lastFocus.focus(); else boardEl.focus();
+}
+modalBack.addEventListener("click", e => { if (e.target === modalBack) cancelAction(); });
+modal.addEventListener("keydown", e => {
+  if (e.key === "Escape"){ e.preventDefault(); cancelAction(); return; }
+  if (e.key === "Tab"){
+    const f = [...modal.querySelectorAll("button, [href], [tabindex]:not([tabindex='-1'])")];
+    if (!f.length) return;
+    const first = f[0], last = f[f.length-1];
+    if (e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+  }
+});
+function openHelp(){
+  openDialog({
+    title: "How to Play",
+    body: `<p>Slide every relic on the table at once. When two <strong>matching relics</strong> touch, they merge into the next, more powerful artifact.</p>
+      <ul>
+        <li><strong>Keyboard:</strong> <kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></li>
+        <li><strong>Touch:</strong> swipe on the board</li>
+        <li><strong>Buttons:</strong> tap the four arrows below the board</li>
+      </ul>
+      <p>Path of relics: Parchment → Ink → Wand → Potion → Spellbook → Sorting Hat → Scarf → Owl → Broom → Snitch → Map → Patronus → Phoenix → Cup → Elder Wand → Stone → Castle → Ancient Magic → Legend… and beyond.</p>
+      <p>Forging the <em>Enchanted Map</em> awakens the Great Hall, but the game never ends while moves remain. Use <strong>Undo</strong> to take back a move. <strong>Sound</strong> and <strong>Calm</strong> effects are optional.</p>`,
+    buttons: [{ label: "Begin the Lesson", primary: true, cancel: true, action: () => { state.settings.seenHelp = true; persist(); closeDialog(); } }]
+  });
+}
+
+/* ============================================================
+   SOUND — Web Audio synthesis, off by default, created on gesture
+   ============================================================ */
+const sfx = (() => {
+  let ctx = null;
+  function ensure(){
+    if (!state.settings.sound) return null;
+    try {
+      if (!ctx){ const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; ctx = new AC(); }
+      if (ctx.state === "suspended") ctx.resume();
+      return ctx;
+    } catch(e){ return null; }
+  }
+  function tone(freq, dur = .12, type = "sine", vol = .05, delay = 0){
+    const c = ensure(); if (!c) return;
+    try {
+      const t0 = c.currentTime + delay, o = c.createOscillator(), g = c.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + .015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g).connect(c.destination); o.start(t0); o.stop(t0 + dur + .02);
+    } catch(e){}
+  }
+  return {
+    unlock: ensure,
+    move(){ tone(220, .07, "triangle", .025); },
+    bump(){ tone(110, .06, "sine", .02); },
+    merge(t){ const f = 330 * Math.pow(2, Math.min(t, 24) / 8); tone(f, .18, "sine", .05); tone(f*1.5, .22, "sine", .025, .04); },
+    milestone(big){ [523, 659, 784, big ? 1047 : 988].forEach((f,i) => tone(f, .35, "sine", .045, i*.09)); if (big) tone(262, .9, "triangle", .03); },
+    over(){ [392, 330, 262].forEach((f,i) => tone(f, .3, "triangle", .035, i*.14)); }
+  };
+})();
+
+/* ============================================================
+   INPUT: keyboard
+   ============================================================ */
+const KEYMAP = { ArrowLeft:"left", ArrowRight:"right", ArrowUp:"up", ArrowDown:"down",
+                 a:"left", d:"right", w:"up", s:"down", A:"left", D:"right", W:"up", S:"down" };
+document.addEventListener("keydown", e => {
+  if (modalOpen || e.altKey || e.ctrlKey || e.metaKey) return;
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea") return;
+  if (eventOpen && !KEYMAP[e.key]){ if (e.key !== "Tab"){ closeEvent(); } return; }
+  const dir = KEYMAP[e.key]; if (!dir) return;   // Enter/Space/Tab keep normal button behaviour
+  e.preventDefault();                              // stop page scrolling for game keys
+  doMove(dir);
+});
+
+/* ============================================================
+   INPUT: swipe (pointer events on the board)
+   - touch-action:none on board prevents scroll/zoom/back-swipe
+   - min distance + dominant-axis check avoid accidental moves
+   - a swipe never triggers a click (small taps do nothing)
+   ============================================================ */
+const SWIPE_MIN = 24;
+let start = null;
+boardEl.addEventListener("pointerdown", e => {
+  if (!e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return;
+  if (e.target.closest("button")) return;          // let overlay buttons click normally
+  start = { x: e.clientX, y: e.clientY, id: e.pointerId };
+});
+window.addEventListener("pointerup", e => {
+  if (!start || e.pointerId !== start.id) return;
+  const dx = e.clientX - start.x, dy = e.clientY - start.y; start = null;
+  const ax = Math.abs(dx), ay = Math.abs(dy);
+  if (Math.max(ax, ay) < SWIPE_MIN) return;
+  if (ax > ay * 1.2) doMove(dx > 0 ? "right" : "left");
+  else if (ay > ax * 1.2) doMove(dy > 0 ? "down" : "up");
+});
+window.addEventListener("pointercancel", () => { start = null; });
+// Older iOS Safari: also block native touch scrolling on the board
+boardEl.addEventListener("touchmove", e => e.preventDefault(), { passive: false });
+
+/* ============================================================
+   INPUT: buttons
+   ============================================================ */
+document.querySelectorAll(".dpad .btn").forEach(b => b.addEventListener("click", () => doMove(b.dataset.dir)));
+$("btnNew").addEventListener("click", requestNewGame);
+$("overNew").addEventListener("click", newGame);
+$("btnUndo").addEventListener("click", undo);
+$("overUndo").addEventListener("click", undo);
+$("btnHelp").addEventListener("click", openHelp);
+$("btnSound").addEventListener("click", () => {
+  state.settings.sound = !state.settings.sound; applySettings(); persist();
+  if (state.settings.sound){ sfx.unlock(); sfx.merge(3); }
+  announce(state.settings.sound ? "Sound on." : "Sound off.");
+});
+$("btnCalm").addEventListener("click", () => {
+  state.settings.calm = !state.settings.calm; applySettings(); persist();
+  announce(state.settings.calm ? "Calm effects on." : "Calm effects off.");
+});
+function applySettings(){
+  $("btnSound").setAttribute("aria-pressed", String(state.settings.sound));
+  $("btnCalm").setAttribute("aria-pressed", String(state.settings.calm));
+  document.body.classList.toggle("calm", state.settings.calm);
+}
+
+/* ============================================================
+   AMBIENT MOTES (few, CSS-animated, skipped on reduced motion)
+   ============================================================ */
+(function motes(){
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const box = $("motes"), n = window.innerWidth < 600 ? 7 : 12;
+  for (let i = 0; i < n; i++){
+    const m = document.createElement("span"); m.className = "mote";
+    m.style.left = Math.random() * 100 + "vw";
+    m.style.setProperty("--dx", (Math.random() * 80 - 40) + "px");
+    m.style.animationDuration = (14 + Math.random() * 14) + "s";
+    m.style.animationDelay = (-Math.random() * 20) + "s";
+    box.appendChild(m);
+  }
+})();
+
+/* ============================================================
+   BOOT — restore saved game if valid, otherwise start fresh
+   ============================================================ */
+(function boot(){
+  const saved = store.load();
+  if (saved && saved.settings) Object.assign(state.settings, saved.settings);
+  if (saved && typeof saved.best === "number") state.best = saved.best;
+  const g = saved && saved.game;
+  const valid = g && Array.isArray(g.tiles) && g.tiles.length > 0 && g.tiles.every(t =>
+    Number.isInteger(t.tier) && t.tier >= 1 && t.r >= 0 && t.r < 4 && t.c >= 0 && t.c < 4);
+  applySettings();
+  if (valid){
+    state.tiles = g.tiles.map(t => ({ id: uid(), tier: t.tier, r: t.r, c: t.c }));
+    state.score = g.score || 0; state.maxTier = g.maxTier || 1; state.flags = g.flags || {};
+    state.over = !canMove(state.tiles);
+    if (Array.isArray(saved.history)) state.history = saved.history.filter(h => h && Array.isArray(h.tiles));
+    hardRender();
+  } else newGame();
+  if (!state.settings.seenHelp) openHelp();
+  else boardEl.focus({ preventScroll: true });
+})();
+
+})();
+</script>
+</body>
+</html>
